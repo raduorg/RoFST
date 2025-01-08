@@ -33,6 +33,7 @@ class RomanianMorphemeFST:
             'ție': MorphemeRule('suffix', 'action/result', {'ție', 'ții'}),
             'ime': MorphemeRule('suffix', 'collective', {'ime'}),
             'iță': MorphemeRule('suffix', 'diminutive', {'iță'}),
+            'tură': MorphemeRule('suffix', 'action result', {'tură'})
         }
 
         self.verb_suffixes: Dict[str, MorphemeRule] = {
@@ -49,23 +50,28 @@ class RomanianMorphemeFST:
         }
 
         # Gender and case endings
-        self.endings: Dict[str, MorphemeRule] = {
+        self.noun_endings: Dict[str, MorphemeRule] = {
             'ul': MorphemeRule('ending', 'def.masc.sg', {'ul', 'l'}),
             'a': MorphemeRule('ending', 'def.fem.sg', {'a'}),
             'lui': MorphemeRule('ending', 'gen/dat.masc.sg', {'lui'}),
             'ei': MorphemeRule('ending', 'gen/dat.fem.sg', {'ei'}),
+            'lor': MorphemeRule('ending', 'gen/dat.fem.pl', {'lor'}),
         }
 
-    def decompose(self, word: str) -> List[Tuple[str, MorphemeRule]]:
+    def decompose(self, word: str, pos: str) -> List[Tuple[str, MorphemeRule]]:
         """
-        Decompose a word into its morphemes.
-        Returns a list of (morpheme, rule) tuples.
+        Decompose a word into its morphemes based on its part of speech.
+        Args:
+            word: The word to decompose
+            pos: Part of speech ('n' for noun, 'v' for verb)
+        Returns:
+            List of (morpheme, rule) tuples
         """
         word = word.lower()
         morphemes = []
         remaining = word
 
-        # Check for prefixes
+        # Check for prefixes (applies to all POS)
         for prefix, rule in self.prefixes.items():
             if any(remaining.startswith(allomorph) for allomorph in rule.allomorphs):
                 for allomorph in rule.allomorphs:
@@ -74,79 +80,58 @@ class RomanianMorphemeFST:
                         remaining = remaining[len(allomorph):]
                         break
 
-        # Find root
-        root_found = False
-        for root, rule in self.roots.items():
-            for allomorph in rule.allomorphs:
-                if allomorph in remaining:
-                    idx = remaining.find(allomorph)
-                    if idx == 0:  # Only match at the beginning
-                        morphemes.append((allomorph, rule))
-                        remaining = remaining[len(allomorph):]
-                        root_found = True
-                        break
-            if root_found:
-                break
+        # Store potential root
+        potential_root = remaining
 
-        # Check for suffixes
-        while remaining:
-            suffix_found = False
-            
-            # Check verb suffixes
+        if pos == 'v':
+            # Process verb suffixes
             for suffix, rule in self.verb_suffixes.items():
-                if any(remaining.startswith(allomorph) for allomorph in rule.allomorphs):
+                if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
                     for allomorph in rule.allomorphs:
-                        if remaining.startswith(allomorph):
+                        if remaining.endswith(allomorph):
                             morphemes.append((allomorph, rule))
-                            remaining = remaining[len(allomorph):]
-                            suffix_found = True
+                            remaining = remaining[:-len(allomorph)]
+                            potential_root = remaining
                             break
-                    break
 
-            # Check noun suffixes
-            if not suffix_found:
-                for suffix, rule in self.noun_suffixes.items():
-                    if any(remaining.startswith(allomorph) for allomorph in rule.allomorphs):
-                        for allomorph in rule.allomorphs:
-                            if remaining.startswith(allomorph):
-                                morphemes.append((allomorph, rule))
-                                remaining = remaining[len(allomorph):]
-                                suffix_found = True
-                                break
-                        break
+        elif pos == 'n':
+            # Process noun suffixes
+            for suffix, rule in self.noun_suffixes.items():
+                if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
+                    for allomorph in rule.allomorphs:
+                        if remaining.endswith(allomorph):
+                            morphemes.append((allomorph, rule))
+                            remaining = remaining[:-len(allomorph)]
+                            potential_root = remaining
+                            break
 
-            # Check plural suffixes
-            if not suffix_found:
-                for suffix, rule in self.plural_suffixes.items():
-                    if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
-                        for allomorph in rule.allomorphs:
-                            if remaining.endswith(allomorph):
-                                morphemes.append((allomorph, rule))
-                                remaining = remaining[:-len(allomorph)]
-                                suffix_found = True
-                                break
-                        break
+            # Process plural suffixes
+            for suffix, rule in self.plural_suffixes.items():
+                if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
+                    for allomorph in rule.allomorphs:
+                        if remaining.endswith(allomorph):
+                            morphemes.append((allomorph, rule))
+                            remaining = remaining[:-len(allomorph)]
+                            potential_root = remaining
+                            break
 
-            # Check endings
-            if not suffix_found:
-                for ending, rule in self.endings.items():
-                    if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
-                        for allomorph in rule.allomorphs:
-                            if remaining.endswith(allomorph):
-                                morphemes.append((allomorph, rule))
-                                remaining = remaining[:-len(allomorph)]
-                                suffix_found = True
-                                break
-                        break
+            # Process endings
+            for ending, rule in self.noun_endings.items():
+                if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
+                    for allomorph in rule.allomorphs:
+                        if remaining.endswith(allomorph):
+                            morphemes.append((allomorph, rule))
+                            remaining = remaining[:-len(allomorph)]
+                            potential_root = remaining
+                            break
 
-            if not suffix_found:
-                # If no more morphemes can be identified, add remaining as unknown
-                if remaining:
-                    morphemes.append((remaining, MorphemeRule('unknown', 'unknown', {remaining})))
-                break
+        # Add the remaining part as root
+        if potential_root:
+            root_rule = MorphemeRule('root', 'root', {potential_root})
+            morphemes.insert(1, (potential_root, root_rule))
 
         return morphemes
-
+    
 def test_morpheme_analyzer():
     analyzer = RomanianMorphemeFST()
     test_words = [
@@ -168,5 +153,13 @@ def test_morpheme_analyzer():
         for morpheme, rule in morphemes:
             print(f"  {morpheme}: {rule.category} - {rule.meaning}")
 
+def run_morpheme_analyzer():
+    analyzer = RomanianMorphemeFST()
+    word = input("Enter the word you want to analyze:")
+    pos = input("what part of speech is the word you entered?(n/v)")
+    morphemes = analyzer.decompose(word, pos)
+    for morpheme, rule in morphemes:
+        print(f"  {morpheme}: {rule.category} - {rule.meaning}")
+
 if __name__ == "__main__":
-    test_morpheme_analyzer()
+    run_morpheme_analyzer()
