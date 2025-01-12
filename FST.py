@@ -18,6 +18,11 @@ class RomanianMorphemeFST:
             'pre': MorphemeRule('prefix', 'pre/before', {'pre'}),
             'ne': MorphemeRule('prefix', 'negation', {'ne'}),
             'sub': MorphemeRule('prefix', 'under', {'sub', 'sup'}),
+            'supra': MorphemeRule('prefix', 'above', {'supra'}),
+            'ante': MorphemeRule('prefix', 'before', {'ante'}),
+            'post': MorphemeRule('prefix', 'after', {'post'}),
+            'pseudo': MorphemeRule('prefix', 'fake', {'pseudo'}),
+            'sin': MorphemeRule('prefix', 'together', {'sin','sim'})
         }
 
         self.noun_suffixes: Dict[str, MorphemeRule] = {
@@ -26,7 +31,9 @@ class RomanianMorphemeFST:
             'ime': MorphemeRule('suffix', 'collective', {'ime'}),
             'iță': MorphemeRule('suffix', 'diminutive', {'iță'}),
             'tură': MorphemeRule('suffix', 'action result', {'tură'}),
-            're': MorphemeRule('suffix', 'action result, long infinitive', {'re'})
+            're': MorphemeRule('suffix', 'action result, long infinitive', {'re'}),
+            'ie':MorphemeRule('suffix', 'action result', {'ie, iune'}),
+            'ar':MorphemeRule('suffix', 'action taker/object of action', {'ar, ară'})
         }
 
         self.verb_suffixes: Dict[str, MorphemeRule] = {
@@ -63,135 +70,169 @@ class RomanianMorphemeFST:
             return 3
         return 4  # fallback for unknown categories
 
-    def _find_prefixes(self, word: str) -> Tuple[List[Tuple[str, MorphemeRule]], str]:
+    def _find_prefix_matches(self, word: str) -> List[Tuple[List[Tuple[str, MorphemeRule]], str]]:
         """
-        Recursively find all prefixes in a word.
-        Returns tuple of (prefix_matches, remaining_word)
+        Find all possible prefix matches starting from the beginning of the word.
+        Returns a list of tuples containing:
+        - List of (morpheme, rule) pairs that were matched
+        - Remaining word after removing those morphemes
         """
-        for prefix, rule in self.prefixes.items():
-            if any(word.startswith(allomorph) for allomorph in rule.allomorphs):
-                for allomorph in rule.allomorphs:
-                    if word.startswith(allomorph):
-                        # Recursive call with remaining word
-                        next_matches, remaining = self._find_prefixes(word[len(allomorph):])
-                        return [(allomorph, rule)] + next_matches, remaining
-        return [], word
-
-    def _find_suffix_matches(self, word: str, suffix_dict: Dict[str, MorphemeRule]) -> List[Tuple[str, MorphemeRule, int]]:
-        """Helper to find all suffix matches with their positions"""
         matches = []
-        for suffix, rule in suffix_dict.items():
-            if any(word.endswith(allomorph) for allomorph in rule.allomorphs):
-                for allomorph in rule.allomorphs:
-                    if word.endswith(allomorph):
-                        start_pos = len(word) - len(allomorph)
-                        matches.append((allomorph, rule, start_pos))
-        return matches
-
-    def decompose(self, word: str, pos: str) -> List[Tuple[str, MorphemeRule]]:
+        # Try to find matches at the beginning
+        for prefix, rule in self.prefixes.items():
+            for allomorph in rule.allomorphs:
+                if word.startswith(allomorph):
+                    remaining = word[len(allomorph):]
+                    # Recursively find other possible prefix matches
+                    next_matches = self._find_prefix_matches_from_start(remaining)
+                    
+                    # Add current match to each possible combination
+                    current_match = [(allomorph, rule)]
+                    if next_matches:
+                        for next_match_list, next_remaining in next_matches:
+                            matches.append((current_match + next_match_list, next_remaining))
+                    # Also add the current match alone as a possibility
+                    matches.append((current_match, remaining))
+        
+        return matches if matches else [([], word)]
+    
+    def _find_suffix_matches(self, word: str, suffix_dict: Dict[str, MorphemeRule]) -> List[Tuple[List[Tuple[str, MorphemeRule]], str]]:
         """
-        Decompose a word into its morphemes based on its part of speech.
+        Find all possible suffix matches starting from the end of the word.
+        Returns a list of tuples containing:
+        - List of (morpheme, rule) pairs that were matched
+        - Remaining word after removing those morphemes
+        """
+        matches = []
+        # First try to find matches at the very end
+        for suffix, rule in suffix_dict.items():
+            for allomorph in rule.allomorphs:
+                if word.endswith(allomorph):
+                    remaining = word[:-len(allomorph)]
+                    # Recursively find other possible matches from the same category
+                    next_matches = self._find_suffix_matches(remaining, suffix_dict)
+                    
+                    # Add current match to each possible combination
+                    current_match = [(allomorph, rule)]
+                    if next_matches:
+                        for next_match_list, next_remaining in next_matches:
+                            matches.append((current_match + next_match_list, next_remaining))
+                    # Also add the current match alone as a possibility
+                    matches.append((current_match, remaining))
+        
+        return matches if matches else [([], word)]
+    
+    def decompose(self, word: str, pos: str) -> List[List[Tuple[str, MorphemeRule]]]:
+        """
+        Decompose a word into all possible morpheme combinations based on part of speech.
         Args:
             word: The word to decompose
             pos: Part of speech ('n' for noun, 'v' for verb)
         Returns:
-            List of (morpheme, rule) tuples
+            List of possible decompositions, where each decomposition is a list of (morpheme, rule) pairs
         """
         word = word.lower()
-        morphemes = []
-        remaining = word
+        all_decompositions = []
 
-        # Check for prefixes (applies to all POS)
-        # Find all prefixes recursively
-        prefix_matches, remaining = self._find_prefixes(remaining)
-        morphemes.extend(prefix_matches)
-        # Store potential root
-        potential_root = remaining
-
-        if pos == 'v':
-            # Process verb suffixes
-            for suffix, rule in self.verb_suffixes.items():
-                if any(remaining.endswith(allomorph) for allomorph in rule.allomorphs):
-                    for allomorph in rule.allomorphs:
-                        if remaining.endswith(allomorph):
-                            morphemes.append((allomorph, rule))
-                            remaining = remaining[:-len(allomorph)]
-                            potential_root = remaining
-                            break
-
-        if pos == 'n':
-            '''
-            Find all possible suffix matches. 
-            In Romanian, we expect case endings to come last, then plural markers,
-            and only then suffixes which are part of the noun in its Nominative-non-det. sg. form (like "tor" in "muncitor")
-            '''
-            matches = []
-            matches.extend(self._find_suffix_matches(remaining, self.noun_endings))
-            matches.extend(self._find_suffix_matches(remaining, self.plural_suffixes))
-            matches.extend(self._find_suffix_matches(remaining, self.noun_suffixes))
-            print(f"all matches are: {matches}")
-            # Sort by position from end. we are matching in reverse order (giving priority to longer suffixes)
-            matches.sort(key=lambda x: x[2], reverse=True)
-
-            # Apply non-overlapping matches
-            used_positions = set()
-            result = list(remaining)  # Convert to list for easier character replacement
+        # Step 1: Find all possible prefix combinations for both nouns and verbs
+        prefix_results = self._find_prefix_matches(word)
+        
+        # Step 2: Process each prefix possibility
+        for prefix_morphemes, after_prefixes in prefix_results:
             
-            for allomorph, rule, start_pos in matches:
-                end_pos = start_pos + len(allomorph)
-                overlap = any(p in used_positions for p in range(start_pos, end_pos))
+            if pos == 'n':
+                # Noun morphology: noun_suffixes -> plural_suffixes -> noun_endings
                 
-                print(f"Checking {allomorph} at pos {start_pos}-{end_pos}, overlap: {overlap}")
+                # Start with rightmost morphemes (noun endings)
+                ending_results = self._find_suffix_matches(after_prefixes, self.noun_endings)
                 
-                if not overlap:
-                    morphemes.append((allomorph, rule))
-                    used_positions.update(range(start_pos, end_pos))
-                    for i in range(start_pos, end_pos):
-                        result[i] = ''
-                    print(f"Applied {allomorph}, remaining: {''.join(result)}")
+                for ending_morphemes, after_endings in ending_results:
+                    # Look for plural suffixes in what remains after removing endings
+                    plural_results = self._find_suffix_matches(after_endings, self.plural_suffixes)
+                    
+                    for plural_morphemes, after_plurals in plural_results:
+                        # Look for noun suffixes in what remains after removing plural markers
+                        noun_suffix_results = self._find_suffix_matches(after_plurals, self.noun_suffixes)
+                        
+                        for noun_suffix_morphemes, remaining in noun_suffix_results:
+                            # What remains after removing all suffixes must be the root
+                            if remaining:
+                                root_morpheme = [(remaining, MorphemeRule('root', 'root', {remaining}))]
+                                
+                                # Combine all morphemes in correct order:
+                                # prefixes + root + noun_suffixes + plural_suffixes + endings
+                                decomposition = (prefix_morphemes + 
+                                            root_morpheme + 
+                                            noun_suffix_morphemes +
+                                            plural_morphemes + 
+                                            ending_morphemes)
+                                
+                                all_decompositions.append(decomposition)
             
-            # Rebuild remaining text removing empty positions
-            remaining = ''.join(c for c in result if c)
-
-            potential_root = remaining
-
-
-        # Add the remaining part as root
-        if potential_root:
-            root_rule = MorphemeRule('root', 'root', {potential_root})
-            morphemes.insert(1, (potential_root, root_rule))
-        # Before returning, sort morphemes by category to make reading the output more intuitive
-        morphemes.sort(key=self._get_morpheme_order)
-        return morphemes
-    
+            elif pos == 'v':
+                # Verb morphology: simpler, just prefixes -> root -> verb_suffixes
+                
+                # Look for verb suffixes
+                verb_suffix_results = self._find_suffix_matches(after_prefixes, self.verb_suffixes)
+                
+                for verb_suffix_morphemes, remaining in verb_suffix_results:
+                    # What remains after removing suffixes must be the root
+                    if remaining:
+                        root_morpheme = [(remaining, MorphemeRule('root', 'root', {remaining}))]
+                        
+                        # Combine morphemes in order:
+                        # prefixes + root + verb_suffixes
+                        decomposition = (prefix_morphemes +
+                                    root_morpheme +
+                                    verb_suffix_morphemes)
+                        
+                        all_decompositions.append(decomposition)
+            
+            else:
+                raise ValueError(f"Unsupported part of speech: {pos}. Use 'n' for nouns or 'v' for verbs.")
+        
+        if not all_decompositions:
+            # If no decompositions were found, treat the entire word as a root
+            root_morpheme = [(word, MorphemeRule('root', 'root', {word}))]
+            all_decompositions.append(root_morpheme)
+        
+        return all_decompositions
+   
 def test_morpheme_analyzer():
     analyzer = RomanianMorphemeFST()
     test_words = [
-        'lucrător',      # lucr-ător (worker)
-        'nelucrând',     # ne-lucr-ând (not working)
-        'făcător',       # făc-ător (maker)
-        'scriitor',      # scri-itor (writer)
-        'citește',       # cit-ește (reads)
-        'prefăcut',      # pre-făc-ut (pretended)
-        'lucrările',     # lucr-ăr-i-le (the works)
-        'descoperire',   # des-coper-ire (discovery)
+        ('lucrător', 'n'),      # lucr-ător (worker)
+        ('nelucrând', 'v'),     # ne-lucr-ând (not working)
+        ('făcător', 'n'),       # făc-ător (maker)
+        ('scriitor', 'n'),      # scri-itor (writer)
+        ('citește', 'v'),       # cit-ește (reads)
+        ('prefăcut', 'v'),      # pre-făc-ut (pretended)
+        ('lucrările', 'n'),     # lucr-ăr-i-le (the works)
+        ('descoperire', 'n'),   # des-coper-ire (discovery)
     ]
 
     print("Romanian Morphological Analysis:")
     print("-" * 50)
-    for word in test_words:
-        morphemes = analyzer.decompose(word)
+    for word, pos in test_words:
+        decompositions = analyzer.decompose(word, pos)
         print(f"\nWord: {word}")
-        for morpheme, rule in morphemes:
-            print(f"  {morpheme}: {rule.category} - {rule.meaning}")
+        for i, decomposition in enumerate(decompositions, 1):
+            print(f"Decomposition {i}:")
+            for morpheme, rule in decomposition:
+                print(f"  {morpheme}: {rule.category} - {rule.meaning}")
 
 def run_morpheme_analyzer():
     analyzer = RomanianMorphemeFST()
-    word = input("Enter the word you want to analyze:")
-    pos = input("what part of speech is the word you entered?(n/v)")
-    morphemes = analyzer.decompose(word, pos)
-    for morpheme, rule in morphemes:
-        print(f"  {morpheme}: {rule.category} - {rule.meaning}")
+    word = input("Enter the word you want to analyze: ")
+    pos = input("What part of speech is the word you entered? (n/v): ")
+    
+    decompositions = analyzer.decompose(word, pos)
+    
+    print(f"\nPossible decompositions for '{word}':")
+    for i, decomposition in enumerate(decompositions, 1):
+        print(f"\nDecomposition {i}:")
+        for morpheme, rule in decomposition:
+            print(f"  {morpheme}: {rule.category} - {rule.meaning}")
 
 if __name__ == "__main__":
     run_morpheme_analyzer()
