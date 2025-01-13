@@ -1,40 +1,11 @@
-from typing import Dict, List, Tuple, Set
-from dataclasses import dataclass
-
-@dataclass
-class MorphemeRule:
-    """Represents a morphological rule with its category and meaning."""
-    category: str
-    meaning: str
-    allomorphs: Set[str]
+from typing import Dict, List, Tuple
+from morphemes import MorphemeRule, prefix_dict, noun_suffix_dict
 
 class RomanianMorphemeFST:
     def __init__(self):
         # Define morpheme categories
-        self.prefixes: Dict[str, MorphemeRule] = {
-            'răs': MorphemeRule('prefix', 'again/against', {'răs', 'răz'}),
-            'în': MorphemeRule('prefix', 'in/into', {'în', 'îm'}),
-            'des': MorphemeRule('prefix', 'un/reverse', {'des', 'dez'}),
-            'pre': MorphemeRule('prefix', 'pre/before', {'pre'}),
-            'ne': MorphemeRule('prefix', 'negation', {'ne'}),
-            'sub': MorphemeRule('prefix', 'under', {'sub', 'sup'}),
-            'supra': MorphemeRule('prefix', 'above', {'supra'}),
-            'ante': MorphemeRule('prefix', 'before', {'ante'}),
-            'post': MorphemeRule('prefix', 'after', {'post'}),
-            'pseudo': MorphemeRule('prefix', 'fake', {'pseudo'}),
-            'sin': MorphemeRule('prefix', 'together', {'sin','sim'})
-        }
-
-        self.noun_suffixes: Dict[str, MorphemeRule] = {
-            'tor': MorphemeRule('suffix', 'agent', {'tor', 'toare'}),
-            'ție': MorphemeRule('suffix', 'action/result', {'ție', 'ții'}),
-            'ime': MorphemeRule('suffix', 'collective', {'ime'}),
-            'iță': MorphemeRule('suffix', 'diminutive', {'iță'}),
-            'tură': MorphemeRule('suffix', 'action result', {'tură'}),
-            're': MorphemeRule('suffix', 'action result, long infinitive', {'re'}),
-            'ie':MorphemeRule('suffix', 'action result', {'ie, iune'}),
-            'ar':MorphemeRule('suffix', 'action taker/object of action', {'ar, ară'})
-        }
+        self.prefixes: Dict[str, MorphemeRule] = prefix_dict
+        self.noun_suffixes: Dict[str, MorphemeRule] = noun_suffix_dict
 
         self.verb_suffixes: Dict[str, MorphemeRule] = {
             'esc': MorphemeRule('suffix', 'present.1sg', {'esc'}),
@@ -99,7 +70,7 @@ class RomanianMorphemeFST:
                 if word.startswith(allomorph):
                     remaining = word[len(allomorph):]
                     # Recursively find other possible prefix matches
-                    next_matches = self._find_prefix_matches_from_start(remaining)
+                    next_matches = self._find_prefix_matches(remaining)
                     
                     # Add current match to each possible combination
                     current_match = [(allomorph, rule)]
@@ -111,29 +82,44 @@ class RomanianMorphemeFST:
         
         return matches if matches else [([], word)]
     
-    def _find_suffix_matches(self, word: str, suffix_dict: Dict[str, MorphemeRule]) -> List[Tuple[List[Tuple[str, MorphemeRule]], str]]:
+    def _find_suffix_matches(self, word: str, suffix_dict: Dict[str, MorphemeRule], return_base=False) -> List[Tuple[List[Tuple[str, MorphemeRule]], str]]:
         """
         Find all possible suffix matches starting from the end of the word.
-        Returns a list of tuples containing:
+        Tries all possible first suffixes and for each one, explores all possible combinations.
+        
+        Returns:
+        List of tuples containing:
         - List of (morpheme, rule) pairs that were matched
         - Remaining word after removing those morphemes
         """
         matches = []
-        # First try to find matches at the very end
+        
+        # Try each suffix as a potential first match
         for suffix, rule in suffix_dict.items():
+            print(f"trying allomorphs: {rule.allomorphs} on word: {word}") #this should print the entire original word n times where n is the total number of entries in the suffix dict
             for allomorph in rule.allomorphs:
                 if word.endswith(allomorph):
                     remaining = word[:-len(allomorph)]
-                    # Recursively find other possible matches from the same category
-                    next_matches = self._find_suffix_matches(remaining, suffix_dict)
+                    print(f"suffix matched: {allomorph}, word: {word}, remaining: {remaining}")
                     
-                    # Add current match to each possible combination
+                    # Create a branch with just this suffix and add it as a match
                     current_match = [(allomorph, rule)]
-                    if next_matches:
-                        for next_match_list, next_remaining in next_matches:
-                            matches.append((current_match + next_match_list, next_remaining))
-                    # Also add the current match alone as a possibility
                     matches.append((current_match, remaining))
+                    
+                    # If there's remaining text, try to find additional suffixes
+                    if remaining:
+                        # Try all possible next suffixes (including the current one)
+                        next_matches = self._find_suffix_matches(remaining, suffix_dict)
+                        
+                        # Add all possible combinations with this first suffix
+                        for next_match_list, next_remaining in next_matches:
+                            if next_match_list:  # Only add if there are actual matches
+                                matches.append((current_match + next_match_list, next_remaining))
+        
+        # Add the option to return the entire original word as if no prefixes were matched  
+        # Always return a list, even if empty
+        if return_base or (not return_base and not matches):
+            matches.append(([], word))
         
         return matches if matches else [([], word)]
     
@@ -159,11 +145,12 @@ class RomanianMorphemeFST:
                 # Noun morphology: noun_suffixes -> plural_suffixes -> noun_endings
                 
                 # Start with rightmost morphemes (noun endings)
-                ending_results = self._find_suffix_matches(after_prefixes, self.noun_endings)
+                # we also want to progress with a branch where no ending is found, hence return_base is True
+                ending_results = self._find_suffix_matches(after_prefixes, self.noun_endings, return_base=True)
                 
                 for ending_morphemes, after_endings in ending_results:
-                    # Look for plural suffixes in what remains after removing endings
-                    plural_results = self._find_suffix_matches(after_endings, self.plural_suffixes)
+                    # Look for plural suffixes in what remains after removing endings. same logic as for ending w respect to base scenario branch
+                    plural_results = self._find_suffix_matches(after_endings, self.plural_suffixes, return_base=True)
                     
                     for plural_morphemes, after_plurals in plural_results:
                         # Look for noun suffixes in what remains after removing plural markers
