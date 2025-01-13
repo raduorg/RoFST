@@ -51,7 +51,7 @@ class RomanianMorphemeFST:
 
         # Gender and case endings
         self.noun_endings: Dict[str, MorphemeRule] = {
-            'ul': MorphemeRule('ending', 'def.masc.sg', {'ul', 'l'}),
+            'ul': MorphemeRule('ending', 'def.masc.sg', {'ul', 'l', 'u'}),
             'a': MorphemeRule('ending', 'def.fem.sg', {'a'}),
             'lui': MorphemeRule('ending', 'gen/dat.masc.sg', {'lui'}),
             'ei': MorphemeRule('ending', 'gen/dat.fem.sg', {'ei'}),
@@ -69,7 +69,22 @@ class RomanianMorphemeFST:
         elif category == 'ending':
             return 3
         return 4  # fallback for unknown categories
-
+    
+    def _remove_duplicates(self, decompositions: List[List[Tuple[str, MorphemeRule]]]) -> List[List[Tuple[str, MorphemeRule]]]:
+        seen = set()
+        unique_decompositions = []
+        
+        for decomp in decompositions:
+            # Create a string representation of the decomposition
+            decomp_str = str([(morpheme, rule.category, rule.meaning, rule.allomorphs) 
+                            for morpheme, rule in decomp])
+            
+            if decomp_str not in seen:
+                seen.add(decomp_str)
+                unique_decompositions.append(decomp)
+        
+        return unique_decompositions
+        
     def _find_prefix_matches(self, word: str) -> List[Tuple[List[Tuple[str, MorphemeRule]], str]]:
         """
         Find all possible prefix matches starting from the beginning of the word.
@@ -195,7 +210,8 @@ class RomanianMorphemeFST:
             # If no decompositions were found, treat the entire word as a root
             root_morpheme = [(word, MorphemeRule('root', 'root', {word}))]
             all_decompositions.append(root_morpheme)
-        
+
+        all_decompositions = self._remove_duplicates(all_decompositions)
         return all_decompositions
    
 def test_morpheme_analyzer():
